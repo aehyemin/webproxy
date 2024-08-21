@@ -11,7 +11,7 @@
 void doit(int fd);
 void read_requesthdrs(rio_t *rp);
 int parse_uri(char *uri, char *filename, char *cgiargs);
-void serve_static(int fd, char *filename, int filesize);
+void serve_static(int fd, char *filename, int filesize, char *method);
 void get_filetype(char *filename, char *filetype);
 void serve_dynamic(int fd, char *filename, char *cgiargs);
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg,
@@ -56,7 +56,7 @@ Rio_readlineb(&rio, buf, MAXLINE);
 printf("request headers:\n");
 printf("%s", buf);
 sscanf(buf, "%s %s %s", method, uri, version);
-if (strcasecmp(method, "GET")) {
+if (strcasecmp(method, "GET") && strcasecmp(method, "HEAD")) {
   clienterror(fd, method, "501", "Not implemented",
             "Tiny does not implemet this method");
     return;
@@ -77,7 +77,7 @@ if (is_static) {/* serve static content */
                 "Tiny couldn't read the file");
     return;
   }
-  serve_static(fd, filename, sbuf.st_size);
+  serve_static(fd, filename, sbuf.st_size, method);
 } else {/* serve dynamic content */
       if (!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode)) {
           clienterror(fd, filename, "403", "Forbidden",
@@ -140,14 +140,17 @@ int parse_uri(char *uri, char *filename, char *cgiargs) {
 			strcpy(cgiargs, ptr+1);
 			*ptr = '\0';
 		} 
-		else 
+		else {
 			strcpy(cgiargs, "");
-		strcpy(filename, uri);
+		}
+		//이부분을안써음
+		strcpy(filename, ".");
+		strcat(filename, uri);
 		return 0;
   }
 }
 
-void serve_static(int fd, char *filename, int filesize) {
+void serve_static(int fd, char *filename, int filesize, char *method) {
 	int srcfd;
 	char *srcp, filetype[MAXLINE], buf[MAXBUF];
 
@@ -163,12 +166,23 @@ void serve_static(int fd, char *filename, int filesize) {
 	printf("Response headers:\n");
 	printf("%s", buf);
 
+	if (strcasecmp(method, "HEAD") == 0 ){
+		return;
+	}
+
 	/* send response body to client */
 	srcfd = Open(filename, O_RDONLY, 0);
-	srcp = Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0);
+	//srcp = Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0);
+	//기존 파일의 데이터를 그대로 가살 메모리에 매핑하는 mmap()과 달리, 
+	//먼저 파일의 크기만큼 메모리를 할당 해준뒤에 rio_readn 사용해서 파일의 데이터를 메모리로 읽어와야함
+	srcp = (char *)malloc(filesize); //mmap대신 malloc사용
+	rio_readn(srcfd, srcp, filesize);
+
 	Close(srcfd);
+	
 	Rio_writen(fd, srcp, filesize);
-	Munmap(srcp, filesize);
+	//Munmap(srcp, filesize); 메모리할당 해제
+	free(srcp);
 }
 
 
@@ -185,8 +199,11 @@ void get_filetype(char *filename, char *filetype) {
 		strcpy(filetype, "image/png");
 	else if (strstr(filename, ".jpeg"))
 		strcpy(filetype, "image/png");
+	else if (strstr(filename, ".mp4"))
+		strcpy(filetype, "video/mp4");
 	else 
 		strcpy(filetype, "text/plain");
+
 }
 
 
